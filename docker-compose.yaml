@@ -1,0 +1,133 @@
+version: "3.9"
+services:
+  mongo:
+    image: mongo:latest
+    container_name: mongo
+    hostname: mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin-user
+      MONGO_INITDB_ROOT_PASSWORD: admin-password
+      DB_NAME: $DB_NAME
+      DB_USER: $DB_USER
+      DB_PASSWORD: $DB_PASSWORD
+    volumes:
+      - db-data:/data/db
+      - ./mongo-init.sh:/docker-entrypoint-initdb.d/mongo-init.sh
+    networks:
+      - main-network
+    command: [ "--bind_ip", "0.0.0.0" ]
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "22181:2181"
+    networks:
+      - main-network
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    depends_on:
+      - zookeeper
+    ports:
+      - 29092:29092
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - main-network
+
+  inventory:
+    build:
+      context: ./Book Inventory/
+      dockerfile: Dockerfile
+    image: inventory
+    container_name: inventory
+    restart: on-failure
+    depends_on:
+      - mongo
+      - kafka
+    ports:
+      - "8082:8000"
+    environment:
+      - SERVER_PORT=8000
+      - SPRING_PROFILES_ACTIVE=prod
+      - SPRING_DATA_MONGODB_AUTHENTICATION_DATABASE=$DB_NAME
+      - SPRING_DATA_MONGODB_AUTO_INDEX_CREATION=$MONGO_AUTO_INDEX_CREATION
+      - SPRING_DATA_MONGODB_HOST=mongo
+      - SPRING_DATA_MONGODB_PORT=27017
+      - SPRING_DATA_MONGODB_USERNAME=$DB_USER
+      - SPRING_DATA_MONGODB_PASSWORD=$DB_PASSWORD
+      - SPRING_DATA_MONGODB_DATABASE=$DB_NAME
+      - SPRING_KAFKA_CONSUMER_GROUP_ID=group-1
+      - SPRING_KAFKA_CONSUMER_BOOTSTRAP_SERVERS=kafka:9092
+    networks:
+      - main-network
+
+  purchase:
+    build:
+      context: ./Book Purchase/
+      dockerfile: Dockerfile
+    image: purchase
+    container_name: purchase
+    restart: on-failure
+    depends_on:
+      - mongo
+      - kafka
+    ports:
+      - "8083:8000"
+    environment:
+      - SERVER_PORT=8000
+      - SPRING_PROFILES_ACTIVE=prod
+      - SPRING_DATA_MONGODB_AUTHENTICATION_DATABASE=$DB_NAME
+      - SPRING_DATA_MONGODB_AUTO_INDEX_CREATION=$MONGO_AUTO_INDEX_CREATION
+      - SPRING_DATA_MONGODB_HOST=mongo
+      - SPRING_DATA_MONGODB_PORT=27017
+      - SPRING_DATA_MONGODB_USERNAME=$DB_USER
+      - SPRING_DATA_MONGODB_PASSWORD=$DB_PASSWORD
+      - SPRING_DATA_MONGODB_DATABASE=$DB_NAME
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    networks:
+      - main-network
+
+  redis-server:
+    container_name: redis
+    image: 'redis'
+    ports:
+      - "6379:6379"
+    networks:
+      - main-network
+
+  loyalty:
+    build:
+      context: ./Loyalty Program/
+      dockerfile: Dockerfile
+    image: loyalty
+    container_name: loyalty
+    restart: on-failure
+    depends_on:
+      - redis-server
+    ports:
+      - "8084:8000"
+    environment:
+      - SERVER_PORT=8000
+      - SPRING_PROFILES_ACTIVE=prod
+      - SPRING_KAFKA_CONSUMER_GROUP_ID=group-2
+      - SPRING_KAFKA_CONSUMER_BOOTSTRAP_SERVERS=kafka:9092
+    networks:
+      - main-network
+
+networks:
+  main-network:
+    external:
+      name: $NETWORK_NAME
+
+volumes:
+  db-data:
